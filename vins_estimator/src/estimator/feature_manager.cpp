@@ -48,20 +48,34 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
-
+/* addFeatureCheckParallax
+对当前帧与之前帧进行视差比较，如果是当前帧变化很小，就会删去倒数第二帧，如果变化很大，就删去最旧的帧。并把这一帧作为新的关键帧
+这样也就保证了划窗内优化的,除了最后一帧可能不是关键帧外,其余的都是关键帧
+VINS里为了控制优化计算量，在实时情况下，只对当前帧之前某一部分帧进行优化，而不是全部历史帧。局部优化帧的数量就是窗口大小。
+为了维持窗口大小，需要去除旧的帧添加新的帧，也就是边缘化 Marginalization。到底是删去最旧的帧（MARGIN_OLD）还是删去刚
+刚进来窗口倒数第二帧(MARGIN_SECOND_NEW)
+如果大于最小像素,则返回true */
+/**
+ * 添加特征点记录，并检查当前帧是否为关键帧
+ * @param frame_count   当前帧在滑窗中的索引
+ * @param image         当前帧特征（featureId，cameraId，feature）
+*/
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
     ROS_DEBUG("num of feature: %d", getFeatureCount());
     double parallax_sum = 0;
-    int parallax_num = 0;
-    last_track_num = 0;
+    int parallax_num = 0;   //平行特征点数
+    last_track_num = 0; //在滑窗中的特征点有多少个在当前帧中继续被追踪到了
     last_average_parallax = 0;
-    new_feature_num = 0;
-    long_track_num = 0;
+    new_feature_num = 0;    //当前帧产生新的特征点数量
+    long_track_num = 0;     //超过4个图像都追踪到的点的数量
+    //遍历当前帧的每一个特征点
     for (auto &id_pts : image)
     {
+        //把当前“特征点”封装成一个FeaturePerFrame对象
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
+
         assert(id_pts.second[0].first == 0);
         if(id_pts.second.size() == 2)
         {
@@ -69,20 +83,25 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
             assert(id_pts.second[1].first == 1);
         }
 
+        //获取当前帧的feature_id
         int feature_id = id_pts.first;
+
+        //在滑窗的所有特征点中，看看能不能找到当前这个特征点
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
                           {
             return it.feature_id == feature_id;
                           });
 
+        //如果这个特征点是一个新的特征(在特征点库里没有找到),那么就把它加入到滑窗的特征点库里
         if (it == feature.end())
         {
             feature.push_back(FeaturePerId(feature_id, frame_count));
             feature.back().feature_per_frame.push_back(f_per_fra);
             new_feature_num++;
         }
-        else if (it->feature_id == feature_id)
+        else if (it->feature_id == feature_id)  //feature_id是当前特征点id，it是检索的指针
         {
+            //增加共视关系
             it->feature_per_frame.push_back(f_per_fra);
             last_track_num++;
             if( it-> feature_per_frame.size() >= 4)
@@ -92,11 +111,14 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
 
     //if (frame_count < 2 || last_track_num < 20)
     //if (frame_count < 2 || last_track_num < 20 || new_feature_num > 0.5 * last_track_num)
+    //如果滑动窗口只有两帧，或者共视点<20或者
     if (frame_count < 2 || last_track_num < 20 || long_track_num < 40 || new_feature_num > 0.5 * last_track_num)
         return true;
 
+    //遍历滑动窗口中的每一个特征点
     for (auto &it_per_id : feature)
     {
+        //如果当前特征点在当前帧-2前出现过... 就是平行特征点
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
         {
@@ -105,6 +127,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         }
     }
 
+    //平行特征点数为0
     if (parallax_num == 0)
     {
         return true;

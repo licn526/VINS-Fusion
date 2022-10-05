@@ -408,18 +408,20 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
     gyr_0 = angular_velocity; 
 }
 
+// 图像处理
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header)
 {
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
+    //检测关键帧
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
     {
-        marginalization_flag = MARGIN_OLD;
+        marginalization_flag = MARGIN_OLD;  // 把旧帧边缘化
         //printf("keyframe\n");
     }
     else
     {
-        marginalization_flag = MARGIN_SECOND_NEW;
+        marginalization_flag = MARGIN_SECOND_NEW;   //把次新帧边缘化
         //printf("non-keyframe\n");
     }
 
@@ -1329,11 +1331,16 @@ void Estimator::optimization()
 void Estimator::slideWindow()
 {
     TicToc t_margin;
+
+    //边缘化老帧
     if (marginalization_flag == MARGIN_OLD)
     {
+        //保存最老帧信息
         double t_0 = Headers[0];
         back_R0 = Rs[0];
         back_P0 = Ps[0];
+
+        //依次把滑窗内信息前移
         if (frame_count == WINDOW_SIZE)
         {
             for (int i = 0; i < WINDOW_SIZE; i++)
