@@ -21,6 +21,7 @@
 
 const int NUM_THREADS = 4;
 
+
 struct ResidualBlockInfo
 {
     ResidualBlockInfo(ceres::CostFunction *_cost_function, ceres::LossFunction *_loss_function, std::vector<double *> _parameter_blocks, std::vector<int> _drop_set)
@@ -52,6 +53,7 @@ struct ThreadsStruct
     std::unordered_map<long, int> parameter_block_idx; //local size
 };
 
+
 class MarginalizationInfo
 {
   public:
@@ -59,17 +61,22 @@ class MarginalizationInfo
     ~MarginalizationInfo();
     int localSize(int size) const;
     int globalSize(int size) const;
+
     void addResidualBlockInfo(ResidualBlockInfo *residual_block_info);
-    void preMarginalize();
-    void marginalize();
+    void preMarginalize();  //得到每次IMU和视觉观测对应的参数块，雅克比矩阵，残差值
+    void marginalize(); //开启多线程构建信息矩阵H和b ，同时从H,b中恢复出线性化雅克比和残差
+
     std::vector<double *> getParameterBlocks(std::unordered_map<long, double *> &addr_shift);
 
     std::vector<ResidualBlockInfo *> factors;
-    int m, n;
+
+
+    int m, n; //m和n都是维度 localsize
     std::unordered_map<long, int> parameter_block_size; //global size
     int sum_block_size;
     std::unordered_map<long, int> parameter_block_idx; //local size
-    std::unordered_map<long, double *> parameter_block_data;
+    std::unordered_map<long, double *> parameter_block_data; //<参数块地址，参数块数据>，需要注意的是这里保存的参数块数据是原始参数块数据的一个拷贝，不再变化，用于记录这些参数块变量在marg时的状态
+
 
     std::vector<int> keep_block_size; //global size
     std::vector<int> keep_block_idx;  //local size
@@ -82,7 +89,8 @@ class MarginalizationInfo
 
 };
 
-class MarginalizationFactor : public ceres::CostFunction
+
+class MarginalizationFactor : public ceres::CostFunction    //上一步边缘化的因子
 {
   public:
     MarginalizationFactor(MarginalizationInfo* _marginalization_info);

@@ -98,8 +98,9 @@ class Estimator
     queue<pair<double, Eigen::Vector3d>> accBuf;
     queue<pair<double, Eigen::Vector3d>> gyrBuf;
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > > featureBuf;
-    double prevTime, curTime;
-    bool openExEstimation;
+
+    double prevTime, curTime;   //前一帧的时间和现在的时间
+    bool openExEstimation;  //外参是否需要估计还是固定
 
     std::thread trackThread;
     std::thread processThread;
@@ -113,46 +114,48 @@ class Estimator
     Matrix3d ric[2];
     Vector3d tic[2];
 
-    Vector3d        Ps[(WINDOW_SIZE + 1)];
+    Vector3d        Ps[(WINDOW_SIZE + 1)];      //滑窗的pvqb
     Vector3d        Vs[(WINDOW_SIZE + 1)];
     Matrix3d        Rs[(WINDOW_SIZE + 1)];
     Vector3d        Bas[(WINDOW_SIZE + 1)];
     Vector3d        Bgs[(WINDOW_SIZE + 1)];
+
     double td;
 
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;
     double Headers[(WINDOW_SIZE + 1)];
 
-    IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];
-    Vector3d acc_0, gyr_0;
+    IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];   //预积分值
+    Vector3d acc_0, gyr_0;  //上一imu帧的加速度和角速度
 
-    vector<double> dt_buf[(WINDOW_SIZE + 1)];
+    vector<double> dt_buf[(WINDOW_SIZE + 1)];           //imu的一些数据
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
 
     int frame_count;
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
-    int inputImageCnt;
+    int inputImageCnt;  //输入的图片个数
 
     FeatureManager f_manager;
-    MotionEstimator m_estimator;
-    InitialEXRotation initial_ex_rotation;
+    MotionEstimator m_estimator;    //用于五点法求RT
+    InitialEXRotation initial_ex_rotation;  //用于标定外参的旋转
 
     bool first_imu;
-    bool is_valid, is_key;
-    bool failure_occur;
+    bool is_valid, is_key;  //没用到
+    bool failure_occur; //failureDetection
 
-    vector<Vector3d> point_cloud;
+    vector<Vector3d> point_cloud;   //貌似与全局位姿图有关
     vector<Vector3d> margin_cloud;
     vector<Vector3d> key_poses;
-    double initial_timestamp;
+    double initial_timestamp;   //初始时间戳（第一帧图像）
 
 
-    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
-    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
-    double para_Feature[NUM_OF_F][SIZE_FEATURE];
-    double para_Ex_Pose[2][SIZE_POSE];
+    //ceres优化时的临时变量
+    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];   //对应pr
+    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS]; //对应v ba bg
+    double para_Feature[NUM_OF_F][SIZE_FEATURE];    //对应逆深度
+    double para_Ex_Pose[2][SIZE_POSE];  //外参
     double para_Retrive_Pose[SIZE_POSE];
     double para_Td[1][1];
     double para_Tr[1][1];
@@ -168,7 +171,7 @@ class Estimator
     Eigen::Vector3d initP;
     Eigen::Matrix3d initR;
 
-    double latest_time;
+    double latest_time; //最新的时间
     Eigen::Vector3d latest_P, latest_V, latest_Ba, latest_Bg, latest_acc_0, latest_gyr_0;
     Eigen::Quaterniond latest_Q;
 

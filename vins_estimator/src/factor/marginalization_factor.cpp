@@ -14,7 +14,7 @@ void ResidualBlockInfo::Evaluate()
     residuals.resize(cost_function->num_residuals());
 
     std::vector<int> block_sizes = cost_function->parameter_block_sizes();
-    raw_jacobians = new double *[block_sizes.size()];
+    raw_jacobians = new double *[block_sizes.size()];   //block_sizes.size()是块个数，不是维度，是因子图中的节点
     jacobians.resize(block_sizes.size());
 
     for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
@@ -99,6 +99,8 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
 {
     factors.emplace_back(residual_block_info);
 
+    //视觉因子就是ti，tj,tbc,dep 7, 7, 7, 1
+    //imu因子是t0，speedbias0，t1,speedbias1   7,9,7,9 两个都有t0，地址不变，不会拷贝
     std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;
     std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();
 
@@ -113,9 +115,13 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
     {
         double *addr = parameter_blocks[residual_block_info->drop_set[i]];
         parameter_block_idx[reinterpret_cast<long>(addr)] = 0;
+        // 通过long类型的地址先记录一下要被marg的变量
     }
 }
 
+/*
+ *把各因子（残差）的待优化变量添加进parameter_block_data中
+ */
 void MarginalizationInfo::preMarginalize()
 {
     for (auto it : factors)
@@ -166,6 +172,7 @@ void* ThreadsConstructA(void* threadsstruct)
                 if (size_j == 7)
                     size_j = 6;
                 Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);
+
                 if (i == j)
                     p->A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
                 else
@@ -173,6 +180,7 @@ void* ThreadsConstructA(void* threadsstruct)
                     p->A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
                     p->A.block(idx_j, idx_i, size_j, size_i) = p->A.block(idx_i, idx_j, size_i, size_j).transpose();
                 }
+
             }
             p->b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;
         }
@@ -180,13 +188,15 @@ void* ThreadsConstructA(void* threadsstruct)
     return threadsstruct;
 }
 
+//构建hessian矩阵，schur掉需要marg的变量
 void MarginalizationInfo::marginalize()
 {
+    //这段代码实际就是排序，marg的变量排在前面，跟marg有关的变量排在后面
     int pos = 0;
     for (auto &it : parameter_block_idx)
     {
-        it.second = pos;
-        pos += localSize(parameter_block_size[it.first]);
+        it.second = pos;    //更新parameter_block_idx（在H的索引）
+        pos += localSize(parameter_block_size[it.first]);   //求pos，所有变量总维度，就是H的维度
     }
 
     m = pos;
@@ -201,6 +211,8 @@ void MarginalizationInfo::marginalize()
     }
 
     n = pos - m;
+
+
     //ROS_INFO("marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
     if(m == 0)
     {
@@ -214,32 +226,33 @@ void MarginalizationInfo::marginalize()
     Eigen::VectorXd b(pos);
     A.setZero();
     b.setZero();
-    /*
-    for (auto it : factors)
-    {
-        for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
-        {
-            int idx_i = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];
-            int size_i = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])]);
-            Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);
-            for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
-            {
-                int idx_j = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[j])];
-                int size_j = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[j])]);
-                Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);
-                if (i == j)
-                    A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
-                else
-                {
-                    A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
-                    A.block(idx_j, idx_i, size_j, size_i) = A.block(idx_i, idx_j, size_i, size_j).transpose();
-                }
-            }
-            b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;
-        }
-    }
-    ROS_INFO("summing up costs %f ms", t_summing.toc());
-    */
+
+//    for (auto it : factors)
+//    {
+//        for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
+//        {
+//            int idx_i = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];
+//            int size_i = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])]);
+//            Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);
+//
+//            for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
+//            {
+//                int idx_j = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[j])];
+//                int size_j = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[j])]);
+//                Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j); //获得第j个参数块的雅克比矩阵
+//                if (i == j)
+//                    A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+//                else
+//                {
+//                    A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+//                    A.block(idx_j, idx_i, size_j, size_i) = A.block(idx_i, idx_j, size_i, size_j).transpose();
+//                }
+//            }
+//            b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;
+//        }
+//    }
+//    ROS_INFO("summing up costs %f ms", t_summing.toc());
+
     //multi thread
 
 
@@ -276,6 +289,8 @@ void MarginalizationInfo::marginalize()
     //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
+    //到这里信息矩阵和b构造完毕，信息矩阵包括imu因子，视觉因子，先验因子
+
 
     //TODO
     Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
@@ -286,6 +301,7 @@ void MarginalizationInfo::marginalize()
     Eigen::MatrixXd Amm_inv = saes.eigenvectors() * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal() * saes.eigenvectors().transpose();
     //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());
 
+    //schur
     Eigen::VectorXd bmm = b.segment(0, m);
     Eigen::MatrixXd Amr = A.block(0, m, m, n);
     Eigen::MatrixXd Arm = A.block(m, 0, n, m);
@@ -344,6 +360,13 @@ MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalizati
     set_num_residuals(marginalization_info->n);
 };
 
+
+/*
+ * 函数通过传入的优化变量值 parameters，以及先验值（对于先验残差就是上一时刻的先验残差
+ * last_marginalization_info，对于IMU就是预积分值pre_integrations[1]，对于视觉
+    就是空间的的像素坐标pts_i, pts_j）
+    可以计算出各项残差值residuals，以及残差对应各优化变量的雅克比矩阵jacobians；
+ */
 bool MarginalizationFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     //printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(), num_residuals());
@@ -354,20 +377,25 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
     //printf("jacobian %x\n", reinterpret_cast<long>(jacobians));
     //printf("residual %x\n", reinterpret_cast<long>(residuals));
     //}
-    int n = marginalization_info->n;
+    int n = marginalization_info->n;    //localsize
     int m = marginalization_info->m;
     Eigen::VectorXd dx(n);
+
+
     for (int i = 0; i < static_cast<int>(marginalization_info->keep_block_size.size()); i++)
     {
+
         int size = marginalization_info->keep_block_size[i];
         int idx = marginalization_info->keep_block_idx[i] - m;
+
         Eigen::VectorXd x = Eigen::Map<const Eigen::VectorXd>(parameters[i], size);
         Eigen::VectorXd x0 = Eigen::Map<const Eigen::VectorXd>(marginalization_info->keep_block_data[i], size);
-        if (size != 7)
+
+        if (size != 7)  //speed_bias 9项
             dx.segment(idx, size) = x - x0;
-        else
+        else    //para_pose和para_expose 7
         {
-            dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();
+            dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();    //平移
             dx.segment<3>(idx + 3) = 2.0 * Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
             if (!((Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).w() >= 0))
             {
@@ -375,6 +403,7 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
             }
         }
     }
+    //计算残差
     Eigen::Map<Eigen::VectorXd>(residuals, n) = marginalization_info->linearized_residuals + marginalization_info->linearized_jacobians * dx;
     if (jacobians)
     {
@@ -388,6 +417,7 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
                 Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobian(jacobians[i], n, size);
                 jacobian.setZero();
                 jacobian.leftCols(local_size) = marginalization_info->linearized_jacobians.middleCols(idx, local_size);
+                //重新排列数据，本来是全在一行，排成矩阵形式
             }
         }
     }

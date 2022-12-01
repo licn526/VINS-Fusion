@@ -25,7 +25,7 @@ using namespace Eigen;
 #include "parameters.h"
 #include "../utility/tic_toc.h"
 
-class FeaturePerFrame
+class FeaturePerFrame   //每个路标点在图像中的信息
 {
   public:
     FeaturePerFrame(const Eigen::Matrix<double, 7, 1> &_point, double td)
@@ -37,7 +37,7 @@ class FeaturePerFrame
         uv.y() = _point(4);
         velocity.x() = _point(5); 
         velocity.y() = _point(6); 
-        cur_td = td;
+        cur_td = td;    //imu和cam同步的时间差
         is_stereo = false;
     }
     void rightObservation(const Eigen::Matrix<double, 7, 1> &_point)
@@ -52,7 +52,7 @@ class FeaturePerFrame
         is_stereo = true;
     }
     double cur_td;
-    Vector3d point, pointRight;
+    Vector3d point, pointRight; //相机坐标系归一化坐标
     Vector2d uv, uvRight;
     Vector2d velocity, velocityRight;
     bool is_stereo;
@@ -61,11 +61,13 @@ class FeaturePerFrame
 class FeaturePerId
 {
   public:
-    const int feature_id;
-    int start_frame;
-    vector<FeaturePerFrame> feature_per_frame;
-    int used_num;
-    double estimated_depth;
+    const int feature_id;   //这个特征的id
+    int start_frame;        //首次被观测到的帧
+
+    vector<FeaturePerFrame> feature_per_frame;  //哪些帧观测到它
+
+    int used_num;           //出现的次数
+    double estimated_depth; //估计的深度
     int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
 
     FeaturePerId(int _feature_id, int _start_frame)
@@ -74,7 +76,7 @@ class FeaturePerId
     {
     }
 
-    int endFrame();
+    int endFrame(); //返回最后一次跟踪到的帧id
 };
 
 class FeatureManager
@@ -102,7 +104,9 @@ class FeatureManager
     void removeBack();
     void removeFront(int frame_count);
     void removeOutlier(set<int> &outlierIndex);
-    list<FeaturePerId> feature;
+
+    list<FeaturePerId> feature; //滑窗内所有路标点
+
     int last_track_num;
     double last_average_parallax;
     int new_feature_num;

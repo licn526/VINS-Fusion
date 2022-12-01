@@ -60,6 +60,25 @@ class IntegrationBase
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
     }
 
+    /**
+     *
+     * @param _dt   i到i+1时间差
+     * @param _acc_0    i时刻imu测量值
+     * @param _gyr_0
+     * @param _acc_1    i+1时刻imu测量值
+     * @param _gyr_1
+     * @param delta_p   i时刻对应公式中的alpha，beta，gamma，ba，bg，ba和bg在k到k+1时刻保持不变
+     * @param delta_q
+     * @param delta_v
+     * @param linearized_ba
+     * @param linearized_bg
+     * @param result_delta_p    i+1时刻的alpha，bata，gamma，ba，bg
+     * @param result_delta_q
+     * @param result_delta_v
+     * @param result_linearized_ba
+     * @param result_linearized_bg
+     * @param update_jacobian   对应公式中的J
+     */
     void midPointIntegration(double _dt, 
                             const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                             const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1,
@@ -69,6 +88,7 @@ class IntegrationBase
                             Eigen::Vector3d &result_linearized_ba, Eigen::Vector3d &result_linearized_bg, bool update_jacobian)
     {
         //ROS_INFO("midpoint integration");
+
         Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);
         Vector3d un_gyr = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2);
@@ -77,7 +97,7 @@ class IntegrationBase
         result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
         result_delta_v = delta_v + un_acc * _dt;
         result_linearized_ba = linearized_ba;
-        result_linearized_bg = linearized_bg;         
+        result_linearized_bg = linearized_bg;
 
         if(update_jacobian)
         {
@@ -130,12 +150,16 @@ class IntegrationBase
 
             //step_jacobian = F;
             //step_V = V;
+            //更新imu约束的协方差和雅克比
+            //协方差两个轴都是delta p, delta q, delta v, delta ba, delta bg
+            //雅克比的纵轴是delta，横轴是两个imu的pvqb
             jacobian = F * jacobian;
             covariance = F * covariance * F.transpose() + V * noise * V.transpose();
         }
 
     }
 
+    //t+1时刻和t时刻的时间间隔，t+1时刻（当前时刻）的acc和gyr
     void propagate(double _dt, const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1)
     {
         dt = _dt;
@@ -147,6 +171,7 @@ class IntegrationBase
         Vector3d result_linearized_ba;
         Vector3d result_linearized_bg;
 
+        //更新imu约束的误差项、协方差和雅克比
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
                             linearized_ba, linearized_bg,
                             result_delta_p, result_delta_q, result_delta_v,
@@ -182,6 +207,7 @@ class IntegrationBase
         Eigen::Vector3d dba = Bai - linearized_ba;
         Eigen::Vector3d dbg = Bgi - linearized_bg;
 
+        //用一阶泰勒展开修正测量值
         Eigen::Quaterniond corrected_delta_q = delta_q * Utility::deltaQ(dq_dbg * dbg);
         Eigen::Vector3d corrected_delta_v = delta_v + dv_dba * dba + dv_dbg * dbg;
         Eigen::Vector3d corrected_delta_p = delta_p + dp_dba * dba + dp_dbg * dbg;
@@ -194,20 +220,20 @@ class IntegrationBase
         return residuals;
     }
 
-    double dt;
-    Eigen::Vector3d acc_0, gyr_0;
-    Eigen::Vector3d acc_1, gyr_1;
+    double dt;  //两个imu帧的时间间隔
+    Eigen::Vector3d acc_0, gyr_0;   // t时刻对应的IMU测量值
+    Eigen::Vector3d acc_1, gyr_1;   // t+1时刻对应的IMU测量值
 
-    const Eigen::Vector3d linearized_acc, linearized_gyr;
-    Eigen::Vector3d linearized_ba, linearized_bg;
+    const Eigen::Vector3d linearized_acc, linearized_gyr;   // 第k帧图像时刻对应的IMU测量值
+    Eigen::Vector3d linearized_ba, linearized_bg;   //在k到k+1时间内视为不变
 
     Eigen::Matrix<double, 15, 15> jacobian, covariance;
     Eigen::Matrix<double, 15, 15> step_jacobian;
     Eigen::Matrix<double, 15, 18> step_V;
-    Eigen::Matrix<double, 18, 18> noise;
+    Eigen::Matrix<double, 18, 18> noise;    //对应公式的Q
 
-    double sum_dt;
-    Eigen::Vector3d delta_p;
+    double sum_dt;  //所有IMU间隔的总时长，由于量测的不同步性，不一定有sum_dt = k+1帧-k帧时间
+    Eigen::Vector3d delta_p;    //p的预积分
     Eigen::Quaterniond delta_q;
     Eigen::Vector3d delta_v;
 

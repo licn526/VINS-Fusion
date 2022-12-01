@@ -70,6 +70,7 @@ bool ProjectionTwoFrameOneCamFactor::Evaluate(double const *const *parameters, d
     residual =  tangent_base * (pts_camera_j.normalized() - pts_j_td.normalized());
 #else
     double dep_j = pts_camera_j.z();
+
     residual = (pts_camera_j / dep_j).head<2>() - pts_j_td.head<2>();
 #endif
 
@@ -98,6 +99,7 @@ bool ProjectionTwoFrameOneCamFactor::Evaluate(double const *const *parameters, d
 #endif
         reduce = sqrt_info * reduce;
 
+        // 对五个优化变量求雅克比
         if (jacobians[0])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]);

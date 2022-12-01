@@ -91,6 +91,7 @@ double FeatureTracker::distance(cv::Point2f &pt1, cv::Point2f &pt2)
     return sqrt(dx * dx + dy * dy);
 }
 
+//对当前帧特征点跟踪和提取
 map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1)
 {
     TicToc t_r;
@@ -100,37 +101,38 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     col = cur_img.cols;
     cv::Mat rightImg = _img1;
     /*
-    {
+    {   //直方图均衡化可增强图像对比度，但也会增加噪点
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
         clahe->apply(cur_img, cur_img);
         if(!rightImg.empty())
             clahe->apply(rightImg, rightImg);
     }
     */
-    cur_pts.clear();
+    cur_pts.clear();    //存的像素坐标，之后在光流追踪之后会变成当前帧追踪到的点的集合
 
-    if (prev_pts.size() > 0)
+    if (prev_pts.size() > 0)    //不是第0帧
     {
         TicToc t_o;
-        vector<uchar> status;
+        vector<uchar> status;   //是否追踪到
         vector<float> err;
-        if(hasPrediction)
+        if(hasPrediction)   //如果没有事先预测的话cur_pts是空的
         {
             cur_pts = predict_pts;
             cv::calcOpticalFlowPyrLK(prev_img, cur_img, prev_pts, cur_pts, status, err, cv::Size(21, 21), 1, 
             cv::TermCriteria(cv::TermCriteria::COUNT+cv::TermCriteria::EPS, 30, 0.01), cv::OPTFLOW_USE_INITIAL_FLOW);
             
-            int succ_num = 0;
+            int succ_num = 0;   // 跟踪到的特征点数量
             for (size_t i = 0; i < status.size(); i++)
             {
                 if (status[i])
                     succ_num++;
             }
-            if (succ_num < 10)
+            if (succ_num < 10) // 特征点太少，金字塔调整为3层，再跟踪一次
                cv::calcOpticalFlowPyrLK(prev_img, cur_img, prev_pts, cur_pts, status, err, cv::Size(21, 21), 3);
         }
         else
             cv::calcOpticalFlowPyrLK(prev_img, cur_img, prev_pts, cur_pts, status, err, cv::Size(21, 21), 3);
+        //反向追踪
         // reverse check
         if(FLOW_BACK)
         {
@@ -151,12 +153,12 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         }
         
         for (int i = 0; i < int(cur_pts.size()); i++)
-            if (status[i] && !inBorder(cur_pts[i]))
+            if (status[i] && !inBorder(cur_pts[i])) //inborder不知道
                 status[i] = 0;
-        reduceVector(prev_pts, status);
-        reduceVector(cur_pts, status);
-        reduceVector(ids, status);
-        reduceVector(track_cnt, status);
+        reduceVector(prev_pts, status);     //上一帧的像素坐标
+        reduceVector(cur_pts, status);      //当前帧的像素坐标
+        reduceVector(ids, status);          //每个点的id
+        reduceVector(track_cnt, status);    //每个点被跟踪到的次数
         ROS_DEBUG("temporal optical flow costs: %fms", t_o.toc());
         //printf("track cnt %d\n", (int)ids.size());
     }
@@ -169,7 +171,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         //rejectWithF();
         ROS_DEBUG("set mask begins");
         TicToc t_m;
-        setMask();
+        setMask();  //使特征点分布更加均匀
         ROS_DEBUG("set mask costs %fms", t_m.toc());
 
         ROS_DEBUG("detect feature begins");
@@ -181,6 +183,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
                 cout << "mask is empty " << endl;
             if (mask.type() != CV_8UC1)
                 cout << "mask type wrong " << endl;
+            //提取shi-tomas角点
             cv::goodFeaturesToTrack(cur_img, n_pts, MAX_CNT - cur_pts.size(), 0.01, MIN_DIST, mask);
         }
         else
@@ -196,10 +199,10 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         //printf("feature cnt after add %d\n", (int)ids.size());
     }
 
-    cur_un_pts = undistortedPts(cur_pts, m_camera[0]);
-    pts_velocity = ptsVelocity(ids, cur_un_pts, cur_un_pts_map, prev_un_pts_map);
+    cur_un_pts = undistortedPts(cur_pts, m_camera[0]);  //将像素恢复成归一化坐标
+    pts_velocity = ptsVelocity(ids, cur_un_pts, cur_un_pts_map, prev_un_pts_map);   //算移动速度，所以用归一化坐标求
 
-    if(!_img1.empty() && stereo_cam)
+    if(!_img1.empty() && stereo_cam)    //如果是双目相机，那么在右目上追踪左目的特征点
     {
         ids_right.clear();
         cur_right_pts.clear();
@@ -305,6 +308,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     return featureFrame;
 }
 
+//计算基础矩阵进行异常点剔除，此处没有使用
 void FeatureTracker::rejectWithF()
 {
     if (cur_pts.size() >= 8)
@@ -393,7 +397,7 @@ vector<cv::Point2f> FeatureTracker::undistortedPts(vector<cv::Point2f> &pts, cam
     vector<cv::Point2f> un_pts;
     for (unsigned int i = 0; i < pts.size(); i++)
     {
-        Eigen::Vector2d a(pts[i].x, pts[i].y);
+        Eigen::Vector2d a(pts[i].x, pts[i].y);  //a是像素坐标
         Eigen::Vector3d b;
         cam->liftProjective(a, b);
         un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z()));
@@ -497,13 +501,13 @@ void FeatureTracker::drawTrack(const cv::Mat &imLeft, const cv::Mat &imRight,
 }
 
 
-void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
+void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)   //predictPts存的是featureid和在next相机系下的空间坐标
 {
     hasPrediction = true;
     predict_pts.clear();
     predict_pts_debug.clear();
     map<int, Eigen::Vector3d>::iterator itPredict;
-    for (size_t i = 0; i < ids.size(); i++)
+    for (size_t i = 0; i < ids.size(); i++) //ids存的是当前还追踪到的点的featureid
     {
         //printf("prevLeftId size %d prevLeftPts size %d\n",(int)prevLeftIds.size(), (int)prevLeftPts.size());
         int id = ids[i];
@@ -511,6 +515,7 @@ void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
         if (itPredict != predictPts.end())
         {
             Eigen::Vector2d tmp_uv;
+            //spaceToPlane将空间点投影到成像平面 https://blog.csdn.net/Yong_Qi2015/article/details/120520566
             m_camera[0]->spaceToPlane(itPredict->second, tmp_uv);
             predict_pts.push_back(cv::Point2f(tmp_uv.x(), tmp_uv.y()));
             predict_pts_debug.push_back(cv::Point2f(tmp_uv.x(), tmp_uv.y()));
@@ -523,7 +528,7 @@ void FeatureTracker::setPrediction(map<int, Eigen::Vector3d> &predictPts)
 
 void FeatureTracker::removeOutliers(set<int> &removePtsIds)
 {
-    std::set<int>::iterator itSet;
+    std::set<int>::itSetiterator ;
     vector<uchar> status;
     for (size_t i = 0; i < ids.size(); i++)
     {

@@ -11,6 +11,7 @@
 
 #include "initial_alignment.h"
 
+//标定陀螺仪bias，视觉算出的旋转和imu预积分的旋转应该相同，差在gyr bias上
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
 {
     Matrix3d A;
@@ -20,6 +21,8 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     b.setZero();
     map<double, ImageFrame>::iterator frame_i;
     map<double, ImageFrame>::iterator frame_j;
+
+    //计算bg
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++)
     {
         frame_j = next(frame_i);
@@ -39,17 +42,18 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     for (int i = 0; i <= WINDOW_SIZE; i++)
         Bgs[i] += delta_bg;
 
+    //重新预积分
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
     {
         frame_j = next(frame_i);
-        frame_j->second.pre_integration->repropagate(Vector3d::Zero(), Bgs[0]);
+        frame_j->second.pre_integration->repropagate(Vector3d::Zero(), Bgs[0]); //为什么是bgs[0]?
     }
 }
 
 
 MatrixXd TangentBasis(Vector3d &g0)
 {
-    Vector3d b, c;
+    Vector3d b, c;  //切向空间的两个基
     Vector3d a = g0.normalized();
     Vector3d tmp(0, 0, 1);
     if(a == tmp)
@@ -64,8 +68,8 @@ MatrixXd TangentBasis(Vector3d &g0)
 
 void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
-    Vector3d g0 = g.normalized() * G.norm();
-    Vector3d lx, ly;
+    Vector3d g0 = g.normalized() * G.norm();    //归一化估计的g乘上G的模长
+    Vector3d lx, ly; //切向空间的两个基
     //VectorXd x;
     int all_frame_count = all_image_frame.size();
     int n_state = all_frame_count * 3 + 2 + 1;
@@ -77,7 +81,7 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
 
     map<double, ImageFrame>::iterator frame_i;
     map<double, ImageFrame>::iterator frame_j;
-    for(int k = 0; k < 4; k++)
+    for(int k = 0; k < 4; k++)  //迭代四次
     {
         MatrixXd lxly(3, 2);
         lxly = TangentBasis(g0);
@@ -132,10 +136,11 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
     g = g0;
 }
 
+//求v g s，g变成2自由度,x是待优化变量，包含每帧的速度、重力，尺度
 bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     int all_frame_count = all_image_frame.size();
-    int n_state = all_frame_count * 3 + 3 + 1;
+    int n_state = all_frame_count * 3 + 3 + 1;  //变量个数
 
     MatrixXd A{n_state, n_state};
     A.setZero();
@@ -154,7 +159,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
         VectorXd tmp_b(6);
         tmp_b.setZero();
 
-        double dt = frame_j->second.pre_integration->sum_dt;
+        double dt = frame_j->second.pre_integration->sum_dt;    //不严格讲是这个图像帧和上一个图像帧的时间间隔
 
         tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
         tmp_A.block<3, 3>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity();
@@ -167,7 +172,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
         tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v;
         //cout << "delta_v   " << frame_j->second.pre_integration->delta_v.transpose() << endl;
 
-        Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
+        Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();    //好像没用
         //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
         //MatrixXd cov_inv = cov.inverse();
         cov_inv.setIdentity();
@@ -187,9 +192,11 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     A = A * 1000.0;
     b = b * 1000.0;
     x = A.ldlt().solve(b);
+
     double s = x(n_state - 1) / 100.0;
     ROS_DEBUG("estimated scale: %f", s);
     g = x.segment<3>(n_state - 4);
+
     ROS_DEBUG_STREAM(" result g     " << g.norm() << " " << g.transpose());
     if(fabs(g.norm() - G.norm()) > 0.5 || s < 0)
     {
@@ -197,6 +204,8 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     }
 
     RefineGravity(all_image_frame, g, x);
+
+    //新的s，新的v
     s = (x.tail<1>())(0) / 100.0;
     (x.tail<1>())(0) = s;
     ROS_DEBUG_STREAM(" refine     " << g.norm() << " " << g.transpose());

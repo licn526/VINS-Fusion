@@ -38,9 +38,9 @@ private:
                     cv::Mat_<double> &t1, cv::Mat_<double> &t2);
     int frame_count;
 
-    vector< Matrix3d > Rc;
-    vector< Matrix3d > Rimu;
-    vector< Matrix3d > Rc_g;
+    vector< Matrix3d > Rc;  //相邻两帧camera的r，由对极约束得到
+    vector< Matrix3d > Rimu;    //相邻两帧imu的r，由imu预积分得到
+    vector< Matrix3d > Rc_g;    //每帧imu对起始帧imu的r
     Matrix3d ric;
 };
 

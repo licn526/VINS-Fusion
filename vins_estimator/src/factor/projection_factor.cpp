@@ -27,6 +27,7 @@ ProjectionFactor::ProjectionFactor(const Eigen::Vector3d &_pts_i, const Eigen::V
 #endif
 };
 
+//计算误差和雅克比
 bool ProjectionFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     TicToc tic_toc;
@@ -41,11 +42,11 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
 
     double inv_dep_i = parameters[3][0];
 
-    Eigen::Vector3d pts_camera_i = pts_i / inv_dep_i;
-    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
-    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi;
-    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj);
-    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic);
+    Eigen::Vector3d pts_camera_i = pts_i / inv_dep_i;   //相机坐标系下的坐标
+    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;   //在第i帧body坐标系的坐标
+    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi;    //在世界坐标系下的坐标
+    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj);    //在第j帧body坐标系下的坐标
+    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic);   //在第j帧相机坐标系下的坐标
     Eigen::Map<Eigen::Vector2d> residual(residuals);
 
 #ifdef UNIT_SPHERE_ERROR 
@@ -80,6 +81,7 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
 #endif
         reduce = sqrt_info * reduce;
 
+        //四块雅克比对应四个参数，位姿0，位姿1，位姿外参，逆深度（此处的位姿是body坐标系对世界坐标系）
         if (jacobians[0])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]);

@@ -14,6 +14,7 @@ int FeaturePerId::endFrame()
     return start_frame + feature_per_frame.size() - 1;
 }
 
+
 FeatureManager::FeatureManager(Matrix3d _Rs[])
     : Rs(_Rs)
 {
@@ -34,6 +35,9 @@ void FeatureManager::clearState()
     feature.clear();
 }
 
+/*
+ * 计算被四帧图及以上观测到的特征点数量
+ */
 int FeatureManager::getFeatureCount()
 {
     int cnt = 0;
@@ -49,8 +53,9 @@ int FeatureManager::getFeatureCount()
 }
 
 /* addFeatureCheckParallax
+ * 关键帧判断
 对当前帧与之前帧进行视差比较，如果是当前帧变化很小，就会删去倒数第二帧，如果变化很大，就删去最旧的帧。并把这一帧作为新的关键帧
-这样也就保证了划窗内优化的,除了最后一帧可能不是关键帧外,其余的都是关键帧
+这样也就保证了滑窗内优化的,除了最后一帧可能不是关键帧外,其余的都是关键帧
 VINS里为了控制优化计算量，在实时情况下，只对当前帧之前某一部分帧进行优化，而不是全部历史帧。局部优化帧的数量就是窗口大小。
 为了维持窗口大小，需要去除旧的帧添加新的帧，也就是边缘化 Marginalization。到底是删去最旧的帧（MARGIN_OLD）还是删去刚
 刚进来窗口倒数第二帧(MARGIN_SECOND_NEW)
@@ -58,34 +63,37 @@ VINS里为了控制优化计算量，在实时情况下，只对当前帧之前�
 /**
  * 添加特征点记录，并检查当前帧是否为关键帧
  * @param frame_count   当前帧在滑窗中的索引
- * @param image         当前帧特征（featureId，cameraId，feature）
+ * @param image         图像的特征
+ * @param td            imu和图像同步的时间差
 */
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
     ROS_DEBUG("num of feature: %d", getFeatureCount());
-    double parallax_sum = 0;
-    int parallax_num = 0;   //平行特征点数
+    double parallax_sum = 0;    //视差和
+    int parallax_num = 0;   //视差点的数量
     last_track_num = 0; //在滑窗中的特征点有多少个在当前帧中继续被追踪到了
     last_average_parallax = 0;
     new_feature_num = 0;    //当前帧产生新的特征点数量
-    long_track_num = 0;     //超过4个图像都追踪到的点的数量
-    //遍历当前帧的每一个特征点
+    long_track_num = 0;     //至少4个图像都追踪到的点的数量
+
+
     for (auto &id_pts : image)
     {
-        //把当前“特征点”封装成一个FeaturePerFrame对象
+
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
 
-        assert(id_pts.second[0].first == 0);
-        if(id_pts.second.size() == 2)
+        assert(id_pts.second[0].first == 0);    //左目或单目camera_id为0
+        if(id_pts.second.size() == 2)   //双目
         {
-            f_per_fra.rightObservation(id_pts.second[1].second);
-            assert(id_pts.second[1].first == 1);
+            f_per_fra.rightObservation(id_pts.second[1].second);    //传入右目信息
+            assert(id_pts.second[1].first == 1);    //双目中的右目camera_id为1
         }
 
-        //获取当前帧的feature_id
+
         int feature_id = id_pts.first;
 
+        //feature是滑窗内的所有特征，是一个数组，里面有很多个FeaturePerId
         //在滑窗的所有特征点中，看看能不能找到当前这个特征点
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
                           {
@@ -95,13 +103,12 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         //如果这个特征点是一个新的特征(在特征点库里没有找到),那么就把它加入到滑窗的特征点库里
         if (it == feature.end())
         {
-            feature.push_back(FeaturePerId(feature_id, frame_count));
-            feature.back().feature_per_frame.push_back(f_per_fra);
-            new_feature_num++;
+            feature.push_back(FeaturePerId(feature_id, frame_count));   //加进滑窗的特征点中
+            feature.back().feature_per_frame.push_back(f_per_fra);  //更新featurePerId的FeaturePerFrame信息
+            new_feature_num++;  //当前帧新特征点数递增
         }
-        else if (it->feature_id == feature_id)  //feature_id是当前特征点id，it是检索的指针
+        else if (it->feature_id == feature_id)
         {
-            //增加共视关系
             it->feature_per_frame.push_back(f_per_fra);
             last_track_num++;
             if( it-> feature_per_frame.size() >= 4)
@@ -111,23 +118,21 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
 
     //if (frame_count < 2 || last_track_num < 20)
     //if (frame_count < 2 || last_track_num < 20 || new_feature_num > 0.5 * last_track_num)
-    //如果滑动窗口只有两帧，或者共视点<20或者
     if (frame_count < 2 || last_track_num < 20 || long_track_num < 40 || new_feature_num > 0.5 * last_track_num)
         return true;
 
     //遍历滑动窗口中的每一个特征点
     for (auto &it_per_id : feature)
     {
-        //如果当前特征点在当前帧-2前出现过... 就是平行特征点
+        //必须要有两帧才能算视差，且这两帧必须是最新的
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
         {
-            parallax_sum += compensatedParallax2(it_per_id, frame_count);
+            parallax_sum += compensatedParallax2(it_per_id, frame_count);   //这个视差是在归一化平面上归一化坐标的差
             parallax_num++;
         }
     }
 
-    //平行特征点数为0
     if (parallax_num == 0)
     {
         return true;
@@ -137,10 +142,11 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
         last_average_parallax = parallax_sum / parallax_num * FOCAL_LENGTH;
-        return parallax_sum / parallax_num >= MIN_PARALLAX;
+        return parallax_sum / parallax_num >= MIN_PARALLAX; //平均视差大于等于阈值
     }
 }
 
+//得到特征点在两帧图像下的归一化坐标
 vector<pair<Vector3d, Vector3d>> FeatureManager::getCorresponding(int frame_count_l, int frame_count_r)
 {
     vector<pair<Vector3d, Vector3d>> corres;
@@ -201,7 +207,7 @@ void FeatureManager::clearDepth()
 
 VectorXd FeatureManager::getDepthVector()
 {
-    VectorXd dep_vec(getFeatureCount());
+    VectorXd dep_vec(getFeatureCount());    //逆深度
     int feature_index = -1;
     for (auto &it_per_id : feature)
     {
@@ -217,7 +223,7 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
-
+//求出的point3d是在l帧相机坐标系下的归一化坐标，手写vio第6章最后
 void FeatureManager::triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen::Matrix<double, 3, 4> &Pose1,
                         Eigen::Vector2d &point0, Eigen::Vector2d &point1, Eigen::Vector3d &point_3d)
 {
@@ -329,13 +335,14 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
         if (it_per_id.estimated_depth > 0)
             continue;
 
-        if(STEREO && it_per_id.feature_per_frame[0].is_stereo)
+        //如果是双目，三角化用到的两帧是首次观测到这个特征点的左右目（如果左目观测到，右目没观测到？）
+        if(STEREO && it_per_id.feature_per_frame[0].is_stereo)  //如果是双目的
         {
             int imu_i = it_per_id.start_frame;
             Eigen::Matrix<double, 3, 4> leftPose;
-            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];    //t0和R0是第i帧“相机”在世界坐标系下的表示（用于三角化）
             Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
-            leftPose.leftCols<3>() = R0.transpose();
+            leftPose.leftCols<3>() = R0.transpose();    //存到leftPose中的是世界系到第i帧相机系的位姿（相反的，见三角化公式）
             leftPose.rightCols<1>() = -R0.transpose() * t0;
             //cout << "left pose " << leftPose << endl;
 
@@ -346,19 +353,19 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             rightPose.rightCols<1>() = -R1.transpose() * t1;
             //cout << "right pose " << rightPose << endl;
 
-            Eigen::Vector2d point0, point1;
-            Eigen::Vector3d point3d;
+            Eigen::Vector2d point0, point1; //像素坐标（归一化坐标的xy）
+            Eigen::Vector3d point3d;    //得到的point3d是世界系的
             point0 = it_per_id.feature_per_frame[0].point.head(2);
             point1 = it_per_id.feature_per_frame[0].pointRight.head(2);
             //cout << "point0 " << point0.transpose() << endl;
             //cout << "point1 " << point1.transpose() << endl;
 
             triangulatePoint(leftPose, rightPose, point0, point1, point3d);
-            Eigen::Vector3d localPoint;
+            Eigen::Vector3d localPoint; //点在第i帧相机系下的空间坐标
             localPoint = leftPose.leftCols<3>() * point3d + leftPose.rightCols<1>();
             double depth = localPoint.z();
             if (depth > 0)
-                it_per_id.estimated_depth = depth;
+                it_per_id.estimated_depth = depth;  //如果是双目，FeaturePerId的estimated_depth是首次观测到它的帧的相机系的深度
             else
                 it_per_id.estimated_depth = INIT_DEPTH;
             /*
@@ -368,6 +375,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             */
             continue;
         }
+        //如果是单目的，共视帧超过1帧，三角化的两帧是首次观测到这个特征点的那一帧和下一帧
         else if(it_per_id.feature_per_frame.size() > 1)
         {
             int imu_i = it_per_id.start_frame;
@@ -403,6 +411,8 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             */
             continue;
         }
+
+        //如果是单目得到，只有一帧观测到它，以下代码会执行？
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (it_per_id.used_num < 4)
             continue;
@@ -413,7 +423,7 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
         int svd_idx = 0;
 
         Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];  //t0和R0是第i帧“相机”在世界坐标系下的表示（用于三角化）
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
@@ -422,12 +432,12 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
         {
             imu_j++;
 
-            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
+            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];    //t1和R1是第j帧“相机”在世界坐标系下的表示
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-            Eigen::Vector3d t = R0.transpose() * (t1 - t0);
+            Eigen::Vector3d t = R0.transpose() * (t1 - t0);         //t和R是第j帧相机在第i帧相机系的（第i帧是首观帧）
             Eigen::Matrix3d R = R0.transpose() * R1;
             Eigen::Matrix<double, 3, 4> P;
-            P.leftCols<3>() = R.transpose();
+            P.leftCols<3>() = R.transpose();                        //P存的是第i帧相机在第j帧相机系的
             P.rightCols<1>() = -R.transpose() * t;
             Eigen::Vector3d f = it_per_frame.point.normalized();
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
@@ -481,7 +491,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
             it->start_frame--;
         else
         {
-            Eigen::Vector3d uv_i = it->feature_per_frame[0].point;  
+            Eigen::Vector3d uv_i = it->feature_per_frame[0].point;     //获得点的3d坐标（相机坐标系）（归一化坐标)
             it->feature_per_frame.erase(it->feature_per_frame.begin());
             if (it->feature_per_frame.size() < 2)
             {
@@ -490,13 +500,13 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
             }
             else
             {
-                Eigen::Vector3d pts_i = uv_i * it->estimated_depth;
-                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
-                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);
+                Eigen::Vector3d pts_i = uv_i * it->estimated_depth; //特征点在相机坐标系下的坐标
+                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;  //特征点在世界坐标系下的坐标
+                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);  //特征点在下一帧相机坐标系的坐标
                 double dep_j = pts_j(2);
                 if (dep_j > 0)
                     it->estimated_depth = dep_j;
-                else
+                else    //在下一帧没有被观测到
                     it->estimated_depth = INIT_DEPTH;
             }
         }
@@ -519,7 +529,7 @@ void FeatureManager::removeBack()
 
         if (it->start_frame != 0)
             it->start_frame--;
-        else
+        else    //当这个特征点首次被最老帧观测到
         {
             it->feature_per_frame.erase(it->feature_per_frame.begin());
             if (it->feature_per_frame.size() == 0)
@@ -541,15 +551,17 @@ void FeatureManager::removeFront(int frame_count)
         else
         {
             int j = WINDOW_SIZE - 1 - it->start_frame;
-            if (it->endFrame() < frame_count - 1)
+            if (it->endFrame() < frame_count - 1)   //如果这个特征点最后一帧在次新帧之前就跟踪结束就不做
                 continue;
-            it->feature_per_frame.erase(it->feature_per_frame.begin() + j);
+            //此处有个问题feature_per_frame的frame id都是连续的吗
+            it->feature_per_frame.erase(it->feature_per_frame.begin() + j); //如果在原本的次新帧被追踪就删除
             if (it->feature_per_frame.size() == 0)
                 feature.erase(it);
         }
     }
 }
 
+//计算视差量
 double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int frame_count)
 {
     //check the second last frame is keyframe or not

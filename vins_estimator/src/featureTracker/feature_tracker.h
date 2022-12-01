@@ -60,25 +60,25 @@ public:
     bool inBorder(const cv::Point2f &pt);
 
     int row, col;
-    cv::Mat imTrack;
-    cv::Mat mask;
+    cv::Mat imTrack;    //当前追踪的图像
+    cv::Mat mask;       //用于使特征点分布均匀
     cv::Mat fisheye_mask;
-    cv::Mat prev_img, cur_img;
-    vector<cv::Point2f> n_pts;
-    vector<cv::Point2f> predict_pts;
+    cv::Mat prev_img, cur_img;  //前一帧和当前帧，双目中指的是左目
+    vector<cv::Point2f> n_pts;  //每一帧中新提取的角点
+    vector<cv::Point2f> predict_pts;    //预测的点，是真正的像素坐标
     vector<cv::Point2f> predict_pts_debug;
-    vector<cv::Point2f> prev_pts, cur_pts, cur_right_pts;
-    vector<cv::Point2f> prev_un_pts, cur_un_pts, cur_un_right_pts;
+    vector<cv::Point2f> prev_pts, cur_pts, cur_right_pts;   //追踪的点，是真正的像素坐标
+    vector<cv::Point2f> prev_un_pts, cur_un_pts, cur_un_right_pts;  //归一化
     vector<cv::Point2f> pts_velocity, right_pts_velocity;
-    vector<int> ids, ids_right;
-    vector<int> track_cnt;
-    map<int, cv::Point2f> cur_un_pts_map, prev_un_pts_map;
+    vector<int> ids, ids_right; //当前帧特征点的id
+    vector<int> track_cnt;  //当前追踪到的角点一共被多少帧图像追踪到
+    map<int, cv::Point2f> cur_un_pts_map, prev_un_pts_map;  //存放ids[i]和cur_un_pts[i]构成的键值对
     map<int, cv::Point2f> cur_un_right_pts_map, prev_un_right_pts_map;
-    map<int, cv::Point2f> prevLeftPtsMap;
-    vector<camodocal::CameraPtr> m_camera;
+    map<int, cv::Point2f> prevLeftPtsMap;   //上一帧的左目中的点
+    vector<camodocal::CameraPtr> m_camera;  //相机类别
     double cur_time;
     double prev_time;
     bool stereo_cam;
-    int n_id;
+    int n_id;   //用来作为特征点id，每检测到一个新的特征点，就将++n_id作为该特征点
     bool hasPrediction;
 };

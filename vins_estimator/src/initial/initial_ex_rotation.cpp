@@ -19,12 +19,13 @@ InitialEXRotation::InitialEXRotation(){
     ric = Matrix3d::Identity();
 }
 
+//https://zhuanlan.zhihu.com/p/150824719
 bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> corres, Quaterniond delta_q_imu, Matrix3d &calib_ric_result)
 {
-    frame_count++;
-    Rc.push_back(solveRelativeR(corres));
+    frame_count++;  //？
+    Rc.push_back(solveRelativeR(corres));   //当前帧对于上一帧的R
     Rimu.push_back(delta_q_imu.toRotationMatrix());
-    Rc_g.push_back(ric.inverse() * delta_q_imu * ric);
+    Rc_g.push_back(ric.inverse() * delta_q_imu * ric);  //两条路得到的rc，为了求误差，进而求核函数
 
     Eigen::MatrixXd A(frame_count * 4, 4);
     A.setZero();
@@ -34,6 +35,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         Quaterniond r1(Rc[i]);
         Quaterniond r2(Rc_g[i]);
 
+        //angular_distance  https://blog.csdn.net/hzwwpgmwy/article/details/84846016#1__116
         double angular_distance = 180 / M_PI * r1.angularDistance(r2);
         ROS_DEBUG(
             "%d %f", i, angular_distance);
@@ -60,14 +62,15 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         A.block<4, 4>((i - 1) * 4, 0) = huber * (L - R);
     }
 
-    JacobiSVD<MatrixXd> svd(A, ComputeFullU | ComputeFullV);
-    Matrix<double, 4, 1> x = svd.matrixV().col(3);
+    JacobiSVD<MatrixXd> svd(A, ComputeFullU | ComputeFullV);    //xyzw
+    Matrix<double, 4, 1> x = svd.matrixV().col(3);  // 右奇异向量作为旋转四元数
     Quaterniond estimated_R(x);
     ric = estimated_R.toRotationMatrix().inverse();
     //cout << svd.singularValues().transpose() << endl;
     //cout << ric << endl;
     Vector3d ric_cov;
     ric_cov = svd.singularValues().tail<3>();
+    //至少迭代计算了WINDOW_SIZE次，且R的奇异值大于0.25才认为标定成功
     if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)
     {
         calib_ric_result = ric;
@@ -77,8 +80,10 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         return false;
 }
 
+//对极几何求位姿，8点法
 Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>> &corres)
 {
+    //corres是当前帧和上一帧的归一化坐标
     if (corres.size() >= 9)
     {
         vector<cv::Point2f> ll, rr;
@@ -87,7 +92,7 @@ Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>
             ll.push_back(cv::Point2f(corres[i].first(0), corres[i].first(1)));
             rr.push_back(cv::Point2f(corres[i].second(0), corres[i].second(1)));
         }
-        cv::Mat E = cv::findFundamentalMat(ll, rr);
+        cv::Mat E = cv::findFundamentalMat(ll, rr); //相机内参为单位阵
         cv::Mat_<double> R1, R2, t1, t2;
         decomposeE(E, R1, R2, t1, t2);
 
@@ -122,7 +127,7 @@ double InitialEXRotation::testTriangulation(const vector<cv::Point2f> &l,
                                  R(2, 0), R(2, 1), R(2, 2), t(2));
     cv::triangulatePoints(P, P1, l, r, pointcloud);
     int front_count = 0;
-    for (int i = 0; i < pointcloud.cols; i++)
+    for (int i = 0; i < pointcloud.cols; i++)   //遍历每个三角化的空间点
     {
         double normal_factor = pointcloud.col(i).at<float>(3);
 
@@ -135,6 +140,7 @@ double InitialEXRotation::testTriangulation(const vector<cv::Point2f> &l,
     return 1.0 * front_count / pointcloud.cols;
 }
 
+//https://zhuanlan.zhihu.com/p/472205819
 void InitialEXRotation::decomposeE(cv::Mat E,
                                  cv::Mat_<double> &R1, cv::Mat_<double> &R2,
                                  cv::Mat_<double> &t1, cv::Mat_<double> &t2)
